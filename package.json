@@ -10,12 +10,14 @@
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./app.plugin.js": "./app.plugin.js"
   },
   "files": [
     "src",
     "lib",
     "android",
+    "app.plugin.js",
     "react-native.config.js",
     "!android/build",
     "!android/gradle",
@@ -82,8 +84,14 @@
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
+    "@expo/config-plugins": "*",
     "react": "*",
     "react-native": "*"
+  },
+  "peerDependenciesMeta": {
+    "@expo/config-plugins": {
+      "optional": true
+    }
   },
   "workspaces": [
     "example"

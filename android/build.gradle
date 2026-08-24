@@ -48,11 +48,17 @@ android {
 
 // AGP refuses to bundle a *release* AAR that has a direct `files(...)` local .aar
 // dependency ("Direct local .aar file dependencies are not supported when building
-// an AAR"). Resolving the vendored SDK through a flatDir repo instead makes it a
-// regular module dependency, which AGP is fine embedding.
+// an AAR"). A flatDir repo dodges that, but it's only visible within this module's
+// own build -- a consuming app's :app project doesn't see it when resolving its own
+// release classpath ("project declares repositories, effectively ignoring the
+// repositories declared in the settings"), so `implementation(name:, ext:)` fails
+// there with "Could not find :EasyLayer-TSG820-v2.1.8-release:". A real local Maven
+// repo (proper group:artifact:version coordinates) resolves the same way an ordinary
+// external dependency would and doesn't hit either problem. Consuming apps must add
+// this repo too -- see android/local-maven-repo and this package's README.
 repositories {
-  flatDir {
-    dirs "libs"
+  maven {
+    url uri("$projectDir/local-maven-repo")
   }
 }
 
@@ -63,6 +69,7 @@ dependencies {
   implementation "com.google.android.material:material:1.12.0"
 
   // Gertec EasyLayer SDK for the TSG820 built-in printer. Distributed by Gertec as a
-  // raw AAR via their developer portal (developer.gertec.com.br) -- not on Maven.
-  implementation(name: "EasyLayer-TSG820-v2.1.8-release", ext: "aar")
+  // raw AAR via their developer portal (developer.gertec.com.br) -- not on Maven, so
+  // it's vendored as a local Maven repo (see android/local-maven-repo) instead.
+  implementation "br.com.gertec:easylayer-tsg820:2.1.8"
 }
