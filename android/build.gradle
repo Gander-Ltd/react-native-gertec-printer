@@ -46,6 +46,16 @@ android {
   }
 }
 
+// AGP refuses to bundle a *release* AAR that has a direct `files(...)` local .aar
+// dependency ("Direct local .aar file dependencies are not supported when building
+// an AAR"). Resolving the vendored SDK through a flatDir repo instead makes it a
+// regular module dependency, which AGP is fine embedding.
+repositories {
+  flatDir {
+    dirs "libs"
+  }
+}
+
 dependencies {
   implementation "com.facebook.react:react-android"
 
@@ -54,5 +64,5 @@ dependencies {
 
   // Gertec EasyLayer SDK for the TSG820 built-in printer. Distributed by Gertec as a
   // raw AAR via their developer portal (developer.gertec.com.br) -- not on Maven.
-  implementation files("libs/EasyLayer-TSG820-v2.1.8-release.aar")
+  implementation(name: "EasyLayer-TSG820-v2.1.8-release", ext: "aar")
 }
