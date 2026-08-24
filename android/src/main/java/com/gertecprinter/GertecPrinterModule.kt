@@ -1,12 +1,131 @@
 package com.gertecprinter
 
+import br.com.gertec.easylayer.printer.Alignment
+import br.com.gertec.easylayer.printer.BarcodeFormat
+import br.com.gertec.easylayer.printer.BarcodeType
+import br.com.gertec.easylayer.printer.Printer
+import br.com.gertec.easylayer.printer.PrinterError
+import br.com.gertec.easylayer.printer.PrinterException
+import br.com.gertec.easylayer.printer.TextFormat
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReadableMap
+import java.util.concurrent.ConcurrentHashMap
 
+// Wraps br.com.gertec.easylayer.printer.Printer (Gertec EasyLayer SDK, TSG820/TSG810
+// built-in printer). The SDK is callback-based: each print call returns a request id
+// synchronously, and Printer.Listener.onPrinterSuccessful/onPrinterError fires later for
+// that id. We keep a table of pending Promises keyed by request id to bridge that into
+// the Promise-based JS API.
 class GertecPrinterModule(reactContext: ReactApplicationContext) :
-  NativeGertecPrinterSpec(reactContext) {
+  NativeGertecPrinterSpec(reactContext),
+  Printer.Listener {
 
-  override fun multiply(a: Double, b: Double): Double {
-    return a * b
+  private val pendingPromises = ConcurrentHashMap<Int, Promise>()
+
+  private val printer: Printer by lazy {
+    Printer.getInstance(reactApplicationContext.applicationContext, this)
+  }
+
+  override fun hasPrinter(promise: Promise) {
+    try {
+      printer.status
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.resolve(false)
+    }
+  }
+
+  override fun getStatus(promise: Promise) {
+    try {
+      val status = printer.status
+      val result = Arguments.createMap()
+      result.putInt("code", status.code)
+      result.putString("message", status.toString())
+      promise.resolve(result)
+    } catch (e: PrinterException) {
+      promise.reject("GERTEC_STATUS_ERROR", e.message, e)
+    }
+  }
+
+  override fun printText(text: String, options: ReadableMap?, promise: Promise) {
+    try {
+      val requestId = printer.printText(buildTextFormat(options), text)
+      pendingPromises[requestId] = promise
+    } catch (e: Exception) {
+      promise.reject("GERTEC_PRINT_TEXT_ERROR", e.message, e)
+    }
+  }
+
+  override fun printBarcode(data: String, options: ReadableMap?, promise: Promise) {
+    try {
+      val requestId = printer.printBarcode(buildBarcodeFormat(options), data)
+      pendingPromises[requestId] = promise
+    } catch (e: Exception) {
+      promise.reject("GERTEC_PRINT_BARCODE_ERROR", e.message, e)
+    }
+  }
+
+  override fun scrollPaper(lines: Double, promise: Promise) {
+    try {
+      val requestId = printer.scrollPaper(lines.toInt())
+      pendingPromises[requestId] = promise
+    } catch (e: Exception) {
+      promise.reject("GERTEC_SCROLL_ERROR", e.message, e)
+    }
+  }
+
+  override fun onPrinterSuccessful(requestId: Int) {
+    pendingPromises.remove(requestId)?.resolve(true)
+  }
+
+  override fun onPrinterError(error: PrinterError) {
+    pendingPromises.remove(error.requestId)?.reject(error.code.toString(), error.cause)
+  }
+
+  private fun buildTextFormat(options: ReadableMap?): TextFormat {
+    val format = TextFormat()
+    if (options == null) return format
+    if (options.hasKey("bold")) format.bold = options.getBoolean("bold")
+    if (options.hasKey("italic")) format.italic = options.getBoolean("italic")
+    if (options.hasKey("underscore")) format.underscore = options.getBoolean("underscore")
+    if (options.hasKey("fontSize")) format.fontSize = options.getInt("fontSize")
+    if (options.hasKey("lineSpacing")) format.lineSpacing = options.getInt("lineSpacing")
+    if (options.hasKey("alignment")) {
+      format.alignment = parseAlignment(options.getString("alignment"))
+    }
+    return format
+  }
+
+  private fun buildBarcodeFormat(options: ReadableMap?): BarcodeFormat {
+    val type = parseBarcodeType(options?.getString("type"))
+    val format = BarcodeFormat(type)
+    if (options != null && options.hasKey("size")) {
+      format.size = parseBarcodeSize(options.getString("size"))
+    }
+    if (options != null && options.hasKey("whiteSpace")) {
+      format.whiteSpace = options.getInt("whiteSpace")
+    }
+    return format
+  }
+
+  private fun parseAlignment(value: String?): Alignment = when (value) {
+    "CENTER" -> Alignment.CENTER
+    "RIGHT" -> Alignment.RIGHT
+    else -> Alignment.LEFT
+  }
+
+  private fun parseBarcodeType(value: String?): BarcodeType = try {
+    BarcodeType.valueOf(value ?: "CODE_128")
+  } catch (e: IllegalArgumentException) {
+    BarcodeType.CODE_128
+  }
+
+  private fun parseBarcodeSize(value: String?): BarcodeFormat.Size = try {
+    BarcodeFormat.Size.valueOf(value ?: "FULL_PAPER")
+  } catch (e: IllegalArgumentException) {
+    BarcodeFormat.Size.FULL_PAPER
   }
 
   companion object {

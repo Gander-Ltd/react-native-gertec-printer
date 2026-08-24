@@ -19,12 +19,12 @@ class GertecPrinterPackage : BaseReactPackage() {
   override fun getReactModuleInfoProvider() = ReactModuleInfoProvider {
     mapOf(
       GertecPrinterModule.NAME to ReactModuleInfo(
-        name = GertecPrinterModule.NAME,
-        className = GertecPrinterModule.NAME,
-        canOverrideExistingModule = false,
-        needsEagerInit = false,
-        isCxxModule = false,
-        isTurboModule = true
+        GertecPrinterModule.NAME,
+        GertecPrinterModule.NAME,
+        false, // canOverrideExistingModule
+        false, // needsEagerInit
+        false, // isCxxModule
+        true // isTurboModule
       )
     )
   }

@@ -2,7 +2,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "paths": {
-      "react-native-gertec-printer": ["./src/index"]
+      "@gander-ltd/react-native-gertec-printer": ["./src/index"]
     },
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,

@@ -48,4 +48,8 @@ android {
 
 dependencies {
   implementation "com.facebook.react:react-android"
+
+  // Gertec EasyLayer SDK for the TSG820 built-in printer. Distributed by Gertec as a
+  // raw AAR via their developer portal (developer.gertec.com.br) -- not on Maven.
+  implementation files("libs/EasyLayer-TSG820-v2.1.8-release.aar")
 }
