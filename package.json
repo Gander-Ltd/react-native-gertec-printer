@@ -65,7 +65,6 @@
     "@jest/globals": "^29.7.0",
     "@react-native/babel-preset": "0.74.83",
     "@react-native/eslint-config": "0.85.0",
-    "@react-native/jest-preset": "0.85.0",
     "@release-it/conventional-changelog": "^11.0.1",
     "@types/react": "^18.2.6",
     "del-cli": "^7.0.0",
@@ -124,7 +123,7 @@
     "useTabs": false
   },
   "jest": {
-    "preset": "@react-native/jest-preset",
+    "preset": "react-native",
     "testEnvironmentOptions": {
       "customExportConditions": [
         "require",

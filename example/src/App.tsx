@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Text, View, StyleSheet, Button, ScrollView } from 'react-native';
-import GertecPrinter, { Alignment, BarcodeType } from '@gander-ltd/react-native-gertec-printer';
+import GertecPrinter, {
+  Alignment,
+  BarcodeType,
+} from '@gander-ltd/react-native-gertec-printer';
 
 export default function App() {
   const [log, setLog] = useState<string[]>([]);
