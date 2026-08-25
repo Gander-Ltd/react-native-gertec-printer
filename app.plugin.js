@@ -22,7 +22,11 @@ function appendContents({ src, newSrc, tag, comment }) {
   const header = createGeneratedHeaderComment(newSrc, tag, comment);
   if (!src.includes(header)) {
     const sanitizedTarget = removeGeneratedContents(src, tag);
-    const contentsToAdd = [header, newSrc, `${comment} @generated end ${tag}`].join('\n');
+    const contentsToAdd = [
+      header,
+      newSrc,
+      `${comment} @generated end ${tag}`,
+    ].join('\n');
     return {
       contents: sanitizedTarget ?? src + contentsToAdd,
       didMerge: true,
@@ -33,19 +37,19 @@ function appendContents({ src, newSrc, tag, comment }) {
 }
 
 const withGertecPrinterGradle = (config) => {
-  return withProjectBuildGradle(config, (config) => {
-    if (config.modResults.language !== 'groovy') {
+  return withProjectBuildGradle(config, (buildGradleConfig) => {
+    if (buildGradleConfig.modResults.language !== 'groovy') {
       throw new Error(
         'Cannot add the Gertec printer maven repo because android/build.gradle is not groovy'
       );
     }
-    config.modResults.contents = appendContents({
-      src: config.modResults.contents,
+    buildGradleConfig.modResults.contents = appendContents({
+      src: buildGradleConfig.modResults.contents,
       newSrc: gradleMaven,
       tag: TAG,
       comment: '//',
     }).contents;
-    return config;
+    return buildGradleConfig;
   });
 };
 
