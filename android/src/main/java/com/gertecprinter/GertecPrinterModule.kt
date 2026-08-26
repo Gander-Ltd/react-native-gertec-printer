@@ -5,7 +5,6 @@ import br.com.gertec.easylayer.printer.BarcodeFormat
 import br.com.gertec.easylayer.printer.BarcodeType
 import br.com.gertec.easylayer.printer.Printer
 import br.com.gertec.easylayer.printer.PrinterError
-import br.com.gertec.easylayer.printer.PrinterException
 import br.com.gertec.easylayer.printer.TextFormat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -32,7 +31,13 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     try {
       printer.status
       promise.resolve(true)
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
+      // Catches Throwable, not just Exception: the vendored SDK bundles a large EMV/NFC
+      // native library set that's almost entirely armeabi-v7a only (one arm64-v8a .so
+      // out of ~19). On an arm64-preferring install those libraries never get extracted,
+      // so if the SDK eagerly touches any of them during init, the JVM throws
+      // UnsatisfiedLinkError/LinkageError -- an Error, not an Exception -- which a plain
+      // `catch (Exception)` would miss entirely and crash the whole app.
       promise.resolve(false)
     }
   }
@@ -44,7 +49,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       result.putInt("code", status.code)
       result.putString("message", status.toString())
       promise.resolve(result)
-    } catch (e: PrinterException) {
+    } catch (e: Throwable) {
       promise.reject("GERTEC_STATUS_ERROR", e.message, e)
     }
   }
@@ -53,7 +58,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     try {
       val requestId = printer.printText(buildTextFormat(options), text)
       pendingPromises[requestId] = promise
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
       promise.reject("GERTEC_PRINT_TEXT_ERROR", e.message, e)
     }
   }
@@ -62,7 +67,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     try {
       val requestId = printer.printBarcode(buildBarcodeFormat(options), data)
       pendingPromises[requestId] = promise
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
       promise.reject("GERTEC_PRINT_BARCODE_ERROR", e.message, e)
     }
   }
@@ -71,7 +76,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     try {
       val requestId = printer.scrollPaper(lines.toInt())
       pendingPromises[requestId] = promise
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
       promise.reject("GERTEC_SCROLL_ERROR", e.message, e)
     }
   }
