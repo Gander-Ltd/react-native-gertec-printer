@@ -24,8 +24,14 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
 
   private val pendingPromises = ConcurrentHashMap<Int, Promise>()
 
+  // Gertec's own sample app calls Printer.getInstance(activity, listener) -- passing the
+  // Application context instead (as this used to) makes getInstance() return null on real
+  // TSG820 hardware, which crashes here with "getValue(...) must not be null" since Kotlin
+  // null-checks non-nullable `by lazy` results. A failed lazy evaluation isn't cached, so
+  // this retries on the next call if currentActivity wasn't available yet.
   private val printer: Printer by lazy {
-    Printer.getInstance(reactApplicationContext.applicationContext, this)
+    val context = reactApplicationContext.currentActivity ?: reactApplicationContext.applicationContext
+    Printer.getInstance(context, this)
   }
 
   override fun hasPrinter(promise: Promise) {
