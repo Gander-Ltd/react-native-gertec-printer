@@ -60,6 +60,7 @@ repositories {
   maven {
     url uri("$projectDir/local-maven-repo")
   }
+  mavenCentral()
 }
 
 dependencies {
@@ -72,4 +73,10 @@ dependencies {
   // raw AAR via their developer portal (developer.gertec.com.br) -- not on Maven, so
   // it's vendored as a local Maven repo (see android/local-maven-repo) instead.
   implementation "br.com.gertec:easylayer-tsg820:2.1.8"
+
+  // compileOnly: only used to report swallowed native errors (see GertecPrinterModule's
+  // reportToSentry) so they're visible even though we deliberately don't crash or reject
+  // for them. Actually present at runtime via the consuming app's @sentry/react-native
+  // dependency; version pinned to match its bundled sentry-android.
+  compileOnly "io.sentry:sentry-android:7.22.6"
 }

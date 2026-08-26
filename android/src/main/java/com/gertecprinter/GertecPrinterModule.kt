@@ -10,6 +10,7 @@ import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
+import io.sentry.Sentry
 import java.util.concurrent.ConcurrentHashMap
 
 // Wraps br.com.gertec.easylayer.printer.Printer (Gertec EasyLayer SDK, TSG820/TSG810
@@ -38,6 +39,12 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       // so if the SDK eagerly touches any of them during init, the JVM throws
       // UnsatisfiedLinkError/LinkageError -- an Error, not an Exception -- which a plain
       // `catch (Exception)` would miss entirely and crash the whole app.
+      //
+      // We still resolve(false) rather than reject, since the JS side treats this as a
+      // normal "no printer" signal -- but that makes a genuine SDK failure on real Gertec
+      // hardware indistinguishable from legitimately no printer present. Report it to
+      // Sentry so the real reason isn't silently lost.
+      reportToSentry(e)
       promise.resolve(false)
     }
   }
@@ -50,6 +57,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       result.putString("message", status.toString())
       promise.resolve(result)
     } catch (e: Throwable) {
+      reportToSentry(e)
       promise.reject("GERTEC_STATUS_ERROR", e.message, e)
     }
   }
@@ -59,6 +67,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       val requestId = printer.printText(buildTextFormat(options), text)
       pendingPromises[requestId] = promise
     } catch (e: Throwable) {
+      reportToSentry(e)
       promise.reject("GERTEC_PRINT_TEXT_ERROR", e.message, e)
     }
   }
@@ -68,6 +77,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       val requestId = printer.printBarcode(buildBarcodeFormat(options), data)
       pendingPromises[requestId] = promise
     } catch (e: Throwable) {
+      reportToSentry(e)
       promise.reject("GERTEC_PRINT_BARCODE_ERROR", e.message, e)
     }
   }
@@ -77,6 +87,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       val requestId = printer.scrollPaper(lines.toInt())
       pendingPromises[requestId] = promise
     } catch (e: Throwable) {
+      reportToSentry(e)
       promise.reject("GERTEC_SCROLL_ERROR", e.message, e)
     }
   }
@@ -86,7 +97,21 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
   }
 
   override fun onPrinterError(error: PrinterError) {
+    Sentry.captureMessage(
+      "GertecPrinter onPrinterError: code=${error.code} cause=${error.cause}"
+    )
     pendingPromises.remove(error.requestId)?.reject(error.code.toString(), error.cause)
+  }
+
+  // Sentry is a compileOnly dependency here -- present at runtime via the consuming
+  // app's @sentry/react-native install, not guaranteed for every future consumer of this
+  // package -- so this is wrapped defensively rather than assumed to always work.
+  private fun reportToSentry(e: Throwable) {
+    try {
+      Sentry.captureException(e)
+    } catch (sentryError: Throwable) {
+      // Best-effort diagnostics only; never let this be the thing that crashes.
+    }
   }
 
   private fun buildTextFormat(options: ReadableMap?): TextFormat {
