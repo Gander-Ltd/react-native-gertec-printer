@@ -1,5 +1,7 @@
 package com.gertecprinter
 
+import android.os.Handler
+import android.os.Looper
 import br.com.gertec.easylayer.printer.Alignment
 import br.com.gertec.easylayer.printer.BarcodeFormat
 import br.com.gertec.easylayer.printer.BarcodeType
@@ -24,6 +26,16 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
 
   private val pendingPromises = ConcurrentHashMap<Int, Promise>()
 
+  // Gertec's own sample app (Impressora.java) only ever calls the SDK from a
+  // View.OnClickListener, which Android always runs on the main thread. React Native
+  // TurboModule methods run on a background bridge thread by default. Printer's internal
+  // request queue/worker (processRequest, checkPendingRequests, decompiled from the SDK)
+  // looks like it depends on a Handler/Looper the SDK sets up around its own thread
+  // model -- calling from a background thread risks requests being queued but never
+  // drained: no exception, no callback, nothing physically prints. Dispatching every SDK
+  // call through the main Looper matches how the SDK was actually designed to be driven.
+  private val mainHandler = Handler(Looper.getMainLooper())
+
   // Gertec's own sample app calls Printer.getInstance(activity, listener) -- passing the
   // Application context instead (as this used to) makes getInstance() return null on real
   // TSG820 hardware, which crashes here with "getValue(...) must not be null" since Kotlin
@@ -35,66 +47,76 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
   }
 
   override fun hasPrinter(promise: Promise) {
-    try {
-      printer.status
-      promise.resolve(true)
-    } catch (e: Throwable) {
-      // Catches Throwable, not just Exception: the vendored SDK bundles a large EMV/NFC
-      // native library set that's almost entirely armeabi-v7a only (one arm64-v8a .so
-      // out of ~19). On an arm64-preferring install those libraries never get extracted,
-      // so if the SDK eagerly touches any of them during init, the JVM throws
-      // UnsatisfiedLinkError/LinkageError -- an Error, not an Exception -- which a plain
-      // `catch (Exception)` would miss entirely and crash the whole app.
-      //
-      // We still resolve(false) rather than reject, since the JS side treats this as a
-      // normal "no printer" signal -- but that makes a genuine SDK failure on real Gertec
-      // hardware indistinguishable from legitimately no printer present. Report it to
-      // Sentry so the real reason isn't silently lost.
-      reportToSentry(e)
-      promise.resolve(false)
+    mainHandler.post {
+      try {
+        printer.status
+        promise.resolve(true)
+      } catch (e: Throwable) {
+        // Catches Throwable, not just Exception: the vendored SDK bundles a large EMV/NFC
+        // native library set that's almost entirely armeabi-v7a only (one arm64-v8a .so
+        // out of ~19). On an arm64-preferring install those libraries never get extracted,
+        // so if the SDK eagerly touches any of them during init, the JVM throws
+        // UnsatisfiedLinkError/LinkageError -- an Error, not an Exception -- which a plain
+        // `catch (Exception)` would miss entirely and crash the whole app.
+        //
+        // We still resolve(false) rather than reject, since the JS side treats this as a
+        // normal "no printer" signal -- but that makes a genuine SDK failure on real Gertec
+        // hardware indistinguishable from legitimately no printer present. Report it to
+        // Sentry so the real reason isn't silently lost.
+        reportToSentry(e)
+        promise.resolve(false)
+      }
     }
   }
 
   override fun getStatus(promise: Promise) {
-    try {
-      val status = printer.status
-      val result = Arguments.createMap()
-      result.putInt("code", status.code)
-      result.putString("message", status.toString())
-      promise.resolve(result)
-    } catch (e: Throwable) {
-      reportToSentry(e)
-      promise.reject("GERTEC_STATUS_ERROR", e.message, e)
+    mainHandler.post {
+      try {
+        val status = printer.status
+        val result = Arguments.createMap()
+        result.putInt("code", status.code)
+        result.putString("message", status.toString())
+        promise.resolve(result)
+      } catch (e: Throwable) {
+        reportToSentry(e)
+        promise.reject("GERTEC_STATUS_ERROR", e.message, e)
+      }
     }
   }
 
   override fun printText(text: String, options: ReadableMap?, promise: Promise) {
-    try {
-      val requestId = printer.printText(buildTextFormat(options), text)
-      pendingPromises[requestId] = promise
-    } catch (e: Throwable) {
-      reportToSentry(e)
-      promise.reject("GERTEC_PRINT_TEXT_ERROR", e.message, e)
+    mainHandler.post {
+      try {
+        val requestId = printer.printText(buildTextFormat(options), text)
+        pendingPromises[requestId] = promise
+      } catch (e: Throwable) {
+        reportToSentry(e)
+        promise.reject("GERTEC_PRINT_TEXT_ERROR", e.message, e)
+      }
     }
   }
 
   override fun printBarcode(data: String, options: ReadableMap?, promise: Promise) {
-    try {
-      val requestId = printer.printBarcode(buildBarcodeFormat(options), data)
-      pendingPromises[requestId] = promise
-    } catch (e: Throwable) {
-      reportToSentry(e)
-      promise.reject("GERTEC_PRINT_BARCODE_ERROR", e.message, e)
+    mainHandler.post {
+      try {
+        val requestId = printer.printBarcode(buildBarcodeFormat(options), data)
+        pendingPromises[requestId] = promise
+      } catch (e: Throwable) {
+        reportToSentry(e)
+        promise.reject("GERTEC_PRINT_BARCODE_ERROR", e.message, e)
+      }
     }
   }
 
   override fun scrollPaper(lines: Double, promise: Promise) {
-    try {
-      val requestId = printer.scrollPaper(lines.toInt())
-      pendingPromises[requestId] = promise
-    } catch (e: Throwable) {
-      reportToSentry(e)
-      promise.reject("GERTEC_SCROLL_ERROR", e.message, e)
+    mainHandler.post {
+      try {
+        val requestId = printer.scrollPaper(lines.toInt())
+        pendingPromises[requestId] = promise
+      } catch (e: Throwable) {
+        reportToSentry(e)
+        promise.reject("GERTEC_SCROLL_ERROR", e.message, e)
+      }
     }
   }
 
