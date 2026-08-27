@@ -74,6 +74,15 @@ dependencies {
   // it's vendored as a local Maven repo (see android/local-maven-repo) instead.
   implementation "br.com.gertec:easylayer-tsg820:2.1.8"
 
+  // Gertec's own printBarcode/BarcodeFormat forces width == height for every barcode
+  // type, including 1D ones -- there's no way to get a normal wide-and-short barcode
+  // through their API, and a square big enough to encode reliably eats most of a
+  // short label's height. We generate the barcode bitmap ourselves with a real ZXing
+  // dependency (unrelated to Gertec's own internally-shaded, differently-packaged
+  // copy at br.com.gertec.easylayer.zxing.*, so no duplicate-class risk) and print it
+  // as an image instead, so width and height can be set independently.
+  implementation "com.google.zxing:core:3.5.3"
+
   // compileOnly: only used to report swallowed native errors (see GertecPrinterModule's
   // reportToSentry) so they're visible even though we deliberately don't crash or reject
   // for them. Actually present at runtime via the consuming app's @sentry/react-native
