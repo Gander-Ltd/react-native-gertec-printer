@@ -111,7 +111,15 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
   override fun printBarcode(data: String, options: ReadableMap?, promise: Promise) {
     mainHandler.post {
       try {
-        val requestId = printer.printImageAutoResize(buildBarcodeBitmap(data, options))
+        val bitmap = buildBarcodeBitmap(data, options)
+        // Diagnostic breadcrumbs, not just error reporting: a prior on-device test printed
+        // the text line before this call but never completed the print (no callback, no
+        // exception, no crash) -- there's no adb/log access to this hardware, so these are
+        // the only way to tell, from the next test, whether printImageAutoResize itself
+        // returns at all versus the request being queued but never getting a callback.
+        logDiagnostic("GertecPrinter.printBarcode: bitmap ${bitmap.width}x${bitmap.height}, calling printImageAutoResize")
+        val requestId = printer.printImageAutoResize(bitmap)
+        logDiagnostic("GertecPrinter.printBarcode: printImageAutoResize returned requestId=$requestId")
         pendingPromises[requestId] = promise
       } catch (e: Throwable) {
         reportToSentry(e)
@@ -149,6 +157,14 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
   private fun reportToSentry(e: Throwable) {
     try {
       Sentry.captureException(e)
+    } catch (sentryError: Throwable) {
+      // Best-effort diagnostics only; never let this be the thing that crashes.
+    }
+  }
+
+  private fun logDiagnostic(message: String) {
+    try {
+      Sentry.captureMessage(message)
     } catch (sentryError: Throwable) {
       // Best-effort diagnostics only; never let this be the thing that crashes.
     }
@@ -199,14 +215,22 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     else -> 290 to 60 // HALF_PAPER and default
   }
 
+  // Every other bitmap this SDK has ever been confirmed to print successfully (Gertec's
+  // own text rendering, and its square barcode presets: 384/192/96) has a byte-aligned
+  // width -- unsurprising for a thermal head, which packs 1-bit-per-pixel rows 8 pixels
+  // to a byte. ZXing's natural barcode width is whatever the data needs (module count
+  // plus margin) and is essentially never a multiple of 8. Padding out to the next
+  // multiple of 8 with white on the right (extra quiet zone, harmless for scanning)
+  // keeps every row byte-aligned like every other bitmap this SDK has actually printed.
   private fun bitMatrixToBitmap(matrix: BitMatrix): Bitmap {
-    val width = matrix.width
     val height = matrix.height
+    val rawWidth = matrix.width
+    val width = (rawWidth + 7) / 8 * 8
     val pixels = IntArray(width * height)
     for (y in 0 until height) {
       val offset = y * width
       for (x in 0 until width) {
-        pixels[offset + x] = if (matrix.get(x, y)) Color.BLACK else Color.WHITE
+        pixels[offset + x] = if (x < rawWidth && matrix.get(x, y)) Color.BLACK else Color.WHITE
       }
     }
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
