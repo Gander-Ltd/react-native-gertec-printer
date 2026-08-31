@@ -125,6 +125,12 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // The printer library only depends on sentry-android as compileOnly (it expects a
+    // real consumer to provide it), so this app needs its own real dependency for
+    // GertecPrinterModule's Sentry calls to actually do anything at runtime. Version
+    // matched to the library's compileOnly pin.
+    implementation "io.sentry:sentry-android:7.22.6"
 }
 
 apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)

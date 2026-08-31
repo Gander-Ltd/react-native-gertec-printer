@@ -89,7 +89,13 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
   override fun printText(text: String, options: ReadableMap?, promise: Promise) {
     mainHandler.post {
       try {
+        // Diagnostic breadcrumb: on-device testing found printText itself (unchanged
+        // code, previously reliable in bruce-in-a-box) hanging on the very first print
+        // of a fresh app/process, with no adb access to see why. This checkpoint tells
+        // us whether printer.printText() itself returns at all.
+        logDiagnostic("GertecPrinter.printText: calling printer.printText")
         val requestId = printer.printText(buildTextFormat(options), text)
+        logDiagnostic("GertecPrinter.printText: printer.printText returned requestId=$requestId")
         pendingPromises[requestId] = promise
       } catch (e: Throwable) {
         reportToSentry(e)

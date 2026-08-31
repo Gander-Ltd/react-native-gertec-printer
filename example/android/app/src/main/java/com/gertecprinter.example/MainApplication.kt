@@ -10,6 +10,7 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.load
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.soloader.SoLoader
+import io.sentry.android.core.SentryAndroid
 
 class MainApplication : Application(), ReactApplication {
 
@@ -34,6 +35,15 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // Native-only Sentry init (no @sentry/react-native JS package) so
+    // GertecPrinterModule's existing reportToSentry/logDiagnostic calls -- which no-op
+    // silently without Sentry present -- actually produce visible events here. Same
+    // DSN/project as bruce-in-a-box, distinguished by environment, so this doesn't need
+    // its own dashboard.
+    SentryAndroid.init(this) { options ->
+      options.dsn = "https://c797e7092237510f69db887d0163870b@o4510868688470016.ingest.de.sentry.io/4511976254734416"
+      options.environment = "gertec-printer-example"
+    }
     SoLoader.init(this, false)
     if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
       // If you opted-in for the New Architecture, we load the native entry point for this app.
