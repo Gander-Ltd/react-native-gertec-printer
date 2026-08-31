@@ -19,3 +19,16 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// The consuming-app config plugin (app.plugin.js) normally injects this for Expo
+// prebuild consumers -- this bare example app doesn't go through that, so it needs the
+// vendored Gertec AAR's local Maven repo registered directly. See
+// android/local-maven-repo and android/build.gradle in the package root for why a real
+// local Maven repo is used instead of a flatDir/files() dependency.
+allprojects {
+    repositories {
+        maven {
+            url uri("$rootDir/../../android/local-maven-repo")
+        }
+    }
+}

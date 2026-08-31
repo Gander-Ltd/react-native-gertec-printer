@@ -90,6 +90,18 @@ android {
             keyPassword 'android'
         }
     }
+    // reactNativeArchitectures only filters RN's own native libs -- the vendored Gertec
+    // AAR bundles its own large EMV/NFC .so set across every ABI regardless, which is
+    // most of this APK's size. An actual per-ABI split is needed to get a small,
+    // shareable file; this test app only needs to run on real ARM hardware.
+    splits {
+        abi {
+            enable true
+            reset()
+            include "armeabi-v7a", "arm64-v8a"
+            universalApk false
+        }
+    }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
