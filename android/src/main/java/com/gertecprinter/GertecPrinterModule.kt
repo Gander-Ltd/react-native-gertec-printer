@@ -1,22 +1,20 @@
 package com.gertecprinter
 
-import android.graphics.Bitmap
-import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import br.com.gertec.easylayer.printer.Alignment
+import br.com.gertec.easylayer.printer.BarcodeFormat
+import br.com.gertec.easylayer.printer.BarcodeType
 import br.com.gertec.easylayer.printer.Printer
 import br.com.gertec.easylayer.printer.PrinterError
 import br.com.gertec.easylayer.printer.TextFormat
+import br.com.gertec.easylayer.utils.BarCodeConfig
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
-import com.google.zxing.BarcodeFormat as ZXBarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.MultiFormatWriter
-import com.google.zxing.common.BitMatrix
 import io.sentry.Sentry
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.ConcurrentHashMap
 
 // Wraps br.com.gertec.easylayer.printer.Printer (Gertec EasyLayer SDK, TSG820/TSG810
@@ -100,27 +98,42 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  // Gertec's own printBarcode/BarcodeFormat (decompiled: BarCodeConfig.calculateBarcodeSize)
-  // forces width == height for every size preset, including 1D types -- there's no way
-  // to get a normal wide-and-short barcode through that API, and a square big enough to
-  // encode a long code reliably eats most of a short label's height. Instead we render
-  // the barcode ourselves with a real ZXing dependency (unrelated to Gertec's own
-  // internally-shaded, differently-packaged copy at br.com.gertec.easylayer.zxing.*) and
-  // print the resulting bitmap via printImageAutoResize, so width and height are
-  // independent.
+  // Gertec's own public printBarcode(BarcodeFormat, String) hardcodes one of 3 SQUARE
+  // size presets (decompiled: Printer.calculateBarcodeSize) before building a
+  // BarCodeConfig -- there's no public API to get a wide-and-short 1D barcode. We first
+  // tried rendering the barcode ourselves (real ZXing) and printing it as an image via
+  // printImageAutoResize instead. That reliably hung on real TSG820 hardware: Sentry
+  // checkpoints around the call showed it entering printImageAutoResize and never
+  // returning -- no callback, no exception, no crash. Gertec's own square barcode (same
+  // request position in the sequence, same eventual native printBmp call) has always
+  // completed normally, so the hang is specific to PrintRequest.Type.IMAGE handling, not
+  // to bitmap content.
+  //
+  // Decompiling br.com.gertec.easylayer.utils.BarCodeConfig found that its own square
+  // forcing lives entirely in Printer.calculateBarcodeSize -- BarCodeConfig itself
+  // (public class, public constructor) accepts arbitrary width/height directly for
+  // CODE_128 and several other 1D types. So a properly wide/short barcode going through
+  // the *working* BARCODE request type is possible -- but Printer's own addPrintRequest
+  // and the PrintRequest constructor are both private/package-private, unreachable from
+  // outside br.com.gertec.easylayer.printer without reflection. queueBarcodeRequest below
+  // does exactly what Printer.printBarcode() does internally, minus the square-forcing.
   override fun printBarcode(data: String, options: ReadableMap?, promise: Promise) {
     mainHandler.post {
       try {
-        val bitmap = buildBarcodeBitmap(data, options)
-        // Diagnostic breadcrumbs, not just error reporting: a prior on-device test printed
-        // the text line before this call but never completed the print (no callback, no
-        // exception, no crash) -- there's no adb/log access to this hardware, so these are
-        // the only way to tell, from the next test, whether printImageAutoResize itself
-        // returns at all versus the request being queued but never getting a callback.
-        logDiagnostic("GertecPrinter.printBarcode: bitmap ${bitmap.width}x${bitmap.height}, calling printImageAutoResize")
-        val requestId = printer.printImageAutoResize(bitmap)
-        logDiagnostic("GertecPrinter.printBarcode: printImageAutoResize returned requestId=$requestId")
+        val (width, height) = parseBarcodeDimensions(options?.getString("size"))
+        val type = parseGertecBarcodeType(options?.getString("type"))
+        val config = BarCodeConfig(data, BarcodeFormat(type), width, height)
+        // Diagnostic breadcrumb: no adb/log access to the real device this runs on, so
+        // this is how we'll know, from the next test, whether the reflective call itself
+        // is the thing that fails, versus the request being queued but never completing.
+        logDiagnostic("GertecPrinter.printBarcode: BarCodeConfig ${width}x${height} built, queuing via BARCODE request type")
+        val requestId = queueBarcodeRequest(config, data)
+        logDiagnostic("GertecPrinter.printBarcode: queued requestId=$requestId")
         pendingPromises[requestId] = promise
+      } catch (e: InvocationTargetException) {
+        val cause = e.targetException ?: e
+        reportToSentry(cause)
+        promise.reject("GERTEC_PRINT_BARCODE_ERROR", cause.message, cause)
       } catch (e: Throwable) {
         reportToSentry(e)
         promise.reject("GERTEC_PRINT_BARCODE_ERROR", e.message, e)
@@ -149,6 +162,43 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
       "GertecPrinter onPrinterError: code=${error.code} cause=${error.cause}"
     )
     pendingPromises.remove(error.requestId)?.reject(error.code.toString(), error.cause)
+  }
+
+  // Mirrors what Printer.printBarcode(BarcodeFormat, String) does internally (decompiled):
+  // new PrintRequest(PrintRequest.Type.BARCODE, config, data, true) followed by
+  // addPrintRequest(request) -- both otherwise inaccessible outside
+  // br.com.gertec.easylayer.printer. Looked up once and cached, since Class.forName/
+  // getDeclaredConstructor/getDeclaredMethod are comparatively expensive and this runs
+  // per barcode print, not in a hot loop.
+  private val printRequestTypeClass: Class<*> by lazy {
+    Class.forName("br.com.gertec.easylayer.printer.PrintRequest\$Type")
+  }
+
+  private val printRequestClass: Class<*> by lazy {
+    Class.forName("br.com.gertec.easylayer.printer.PrintRequest")
+  }
+
+  private val barcodeRequestType: Any by lazy {
+    printRequestTypeClass.getField("BARCODE").get(null)
+  }
+
+  private val printRequestConstructor by lazy {
+    printRequestClass.getDeclaredConstructor(
+      printRequestTypeClass,
+      Any::class.java,
+      Any::class.java,
+      Boolean::class.javaPrimitiveType
+    ).apply { isAccessible = true }
+  }
+
+  private val addPrintRequestMethod by lazy {
+    Printer::class.java.getDeclaredMethod("addPrintRequest", printRequestClass)
+      .apply { isAccessible = true }
+  }
+
+  private fun queueBarcodeRequest(config: BarCodeConfig, data: String): Int {
+    val request = printRequestConstructor.newInstance(barcodeRequestType, config, data, true)
+    return addPrintRequestMethod.invoke(printer, request) as Int
   }
 
   // Sentry is a compileOnly dependency here -- present at runtime via the consuming
@@ -184,58 +234,20 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     return format
   }
 
-  private fun buildBarcodeBitmap(data: String, options: ReadableMap?): Bitmap {
-    val format = parseZXBarcodeFormat(options?.getString("type"))
-    val (width, height) = parseBarcodeDimensions(options?.getString("size"))
-    // ZXing's own default quiet-zone margin is already scan-safe; only override it if
-    // the caller explicitly asked for a different one via the existing whiteSpace option.
-    val hints: Map<EncodeHintType, Any> =
-      if (options != null && options.hasKey("whiteSpace")) {
-        mapOf(EncodeHintType.MARGIN to options.getInt("whiteSpace"))
-      } else {
-        emptyMap()
-      }
-    val matrix = MultiFormatWriter().encode(data, format, width, height, hints)
-    return bitMatrixToBitmap(matrix)
-  }
-
-  // ZXing's 1D writers (OneDimensionalCodeWriter.renderResult, decompiled) only ever
-  // grow the requested width up to whatever the data actually needs -- outputWidth =
-  // max(width, naturalWidth) -- they never truncate or corrupt a barcode that needs
-  // more room than requested, they just render wider than asked. So these are
-  // targets/minimums, not hard caps: safe to keep comfortably under MAX_PRINT_WIDTH
-  // (384 dots, per Gertec's BarCodeConfig) while still giving reduction.newBarCode's
-  // actual (unknown) length room to encode at a legible module width. Heights are
-  // fixed and short regardless of size -- unlike Gertec's own square-forced
-  // BarcodeFormat.Size presets -- so both text lines always have room left on the
-  // 240-dot (30mm) label.
+  // BarCodeConfig/CodeUtil.createBarcode (decompiled) clamps up to a 200x50 minimum
+  // internally and, like public ZXing's OneDimensionalCodeWriter, grows the output width
+  // to fit whatever the data actually needs if the requested width is too small -- it
+  // never truncates or corrupts a barcode that needs more room than requested. So these
+  // are targets/minimums, not hard caps: safe to keep comfortably under MAX_PRINT_WIDTH
+  // (384 dots, per Gertec's Printer.calculateBarcodeSize) while still giving
+  // reduction.newBarCode's actual (unknown) length room to encode at a legible module
+  // width. Heights are fixed and short regardless of size -- unlike Gertec's own
+  // square-forced BarcodeFormat.Size presets -- so both text lines always have room left
+  // on the 240-dot (30mm) label.
   private fun parseBarcodeDimensions(value: String?): Pair<Int, Int> = when (value) {
     "SMALL" -> 220 to 50
     "FULL_PAPER" -> 350 to 70
     else -> 290 to 60 // HALF_PAPER and default
-  }
-
-  // Every other bitmap this SDK has ever been confirmed to print successfully (Gertec's
-  // own text rendering, and its square barcode presets: 384/192/96) has a byte-aligned
-  // width -- unsurprising for a thermal head, which packs 1-bit-per-pixel rows 8 pixels
-  // to a byte. ZXing's natural barcode width is whatever the data needs (module count
-  // plus margin) and is essentially never a multiple of 8. Padding out to the next
-  // multiple of 8 with white on the right (extra quiet zone, harmless for scanning)
-  // keeps every row byte-aligned like every other bitmap this SDK has actually printed.
-  private fun bitMatrixToBitmap(matrix: BitMatrix): Bitmap {
-    val height = matrix.height
-    val rawWidth = matrix.width
-    val width = (rawWidth + 7) / 8 * 8
-    val pixels = IntArray(width * height)
-    for (y in 0 until height) {
-      val offset = y * width
-      for (x in 0 until width) {
-        pixels[offset + x] = if (x < rawWidth && matrix.get(x, y)) Color.BLACK else Color.WHITE
-      }
-    }
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-    return bitmap
   }
 
   private fun parseAlignment(value: String?): Alignment = when (value) {
@@ -244,13 +256,10 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     else -> Alignment.LEFT
   }
 
-  // Every br.com.gertec.easylayer.printer.BarcodeType name matches a
-  // com.google.zxing.BarcodeFormat name exactly, so this is a straight parse rather
-  // than a lookup table.
-  private fun parseZXBarcodeFormat(value: String?): ZXBarcodeFormat = try {
-    ZXBarcodeFormat.valueOf(value ?: "CODE_128")
+  private fun parseGertecBarcodeType(value: String?): BarcodeType = try {
+    BarcodeType.valueOf(value ?: "CODE_128")
   } catch (e: IllegalArgumentException) {
-    ZXBarcodeFormat.CODE_128
+    BarcodeType.CODE_128
   }
 
   companion object {
