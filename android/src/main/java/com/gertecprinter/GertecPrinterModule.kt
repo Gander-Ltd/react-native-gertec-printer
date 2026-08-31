@@ -28,6 +28,28 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
 
   private val pendingPromises = ConcurrentHashMap<Int, Promise>()
 
+  // Printer.addPrintRequest (decompiled) calls checkPendingRequests() synchronously,
+  // before returning the request id -- and when the queue is idle, checkPendingRequests
+  // itself synchronously calls processRequest() and then
+  // Printer.Listener.onPrinterSuccessful()/onPrinterError(), all nested inside the very
+  // printText()/printBarcode()/scrollPaper() call being made. Confirmed on a real
+  // device via Sentry: printText returned a valid requestId, yet its promise never
+  // resolved -- exactly the signature of onPrinterSuccessful firing before this class
+  // had a chance to register the promise for that id (pendingPromises was still empty
+  // at that moment, so the resolve had nothing to act on, and the promise registered a
+  // moment later then waits forever for a signal that already came and went). This
+  // buffers completions that arrive before registration, so either ordering resolves
+  // correctly.
+  private val completedRequestResults = ConcurrentHashMap<Int, Any>()
+
+  private fun registerPendingPromise(requestId: Int, promise: Promise) {
+    when (val alreadyCompleted = completedRequestResults.remove(requestId)) {
+      null -> pendingPromises[requestId] = promise
+      is PrinterError -> promise.reject(alreadyCompleted.code.toString(), alreadyCompleted.cause)
+      else -> promise.resolve(true)
+    }
+  }
+
   // Gertec's own sample app (Impressora.java) only ever calls the SDK from a
   // View.OnClickListener, which Android always runs on the main thread. React Native
   // TurboModule methods run on a background bridge thread by default. Printer's internal
@@ -96,7 +118,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
         logDiagnostic("GertecPrinter.printText: calling printer.printText")
         val requestId = printer.printText(buildTextFormat(options), text)
         logDiagnostic("GertecPrinter.printText: printer.printText returned requestId=$requestId")
-        pendingPromises[requestId] = promise
+        registerPendingPromise(requestId, promise)
       } catch (e: Throwable) {
         reportToSentry(e)
         promise.reject("GERTEC_PRINT_TEXT_ERROR", e.message, e)
@@ -135,7 +157,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
         logDiagnostic("GertecPrinter.printBarcode: BarCodeConfig ${width}x${height} built, queuing via BARCODE request type")
         val requestId = queueBarcodeRequest(config, data)
         logDiagnostic("GertecPrinter.printBarcode: queued requestId=$requestId")
-        pendingPromises[requestId] = promise
+        registerPendingPromise(requestId, promise)
       } catch (e: InvocationTargetException) {
         val cause = e.targetException ?: e
         reportToSentry(cause)
@@ -151,7 +173,7 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
     mainHandler.post {
       try {
         val requestId = printer.scrollPaper(lines.toInt())
-        pendingPromises[requestId] = promise
+        registerPendingPromise(requestId, promise)
       } catch (e: Throwable) {
         reportToSentry(e)
         promise.reject("GERTEC_SCROLL_ERROR", e.message, e)
@@ -160,14 +182,26 @@ class GertecPrinterModule(reactContext: ReactApplicationContext) :
   }
 
   override fun onPrinterSuccessful(requestId: Int) {
-    pendingPromises.remove(requestId)?.resolve(true)
+    val promise = pendingPromises.remove(requestId)
+    if (promise != null) {
+      promise.resolve(true)
+    } else {
+      // The SDK completed this request synchronously, before the originating call
+      // returned the id to register a promise for it -- see completedRequestResults.
+      completedRequestResults[requestId] = true
+    }
   }
 
   override fun onPrinterError(error: PrinterError) {
     Sentry.captureMessage(
       "GertecPrinter onPrinterError: code=${error.code} cause=${error.cause}"
     )
-    pendingPromises.remove(error.requestId)?.reject(error.code.toString(), error.cause)
+    val promise = pendingPromises.remove(error.requestId)
+    if (promise != null) {
+      promise.reject(error.code.toString(), error.cause)
+    } else {
+      completedRequestResults[error.requestId] = error
+    }
   }
 
   // Mirrors what Printer.printBarcode(BarcodeFormat, String) does internally (decompiled):
