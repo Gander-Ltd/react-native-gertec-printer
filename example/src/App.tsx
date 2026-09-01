@@ -51,31 +51,39 @@ export default function App() {
     }
   };
 
-  // Mirrors PrinterService.printReducedLabelGertec exactly, including the 1-line gaps
-  // between text/barcode/price and the settle delay after scrollPaper -- but with
-  // scrollLines/settleDelayMs as live variables instead of hardcoded, so both can be
-  // tuned from the buttons below without a rebuild.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+
+  // Mirrors PrinterService.printReducedLabelGertec, but -- as an experiment -- settles
+  // after every single SDK call, not just the final scrollPaper. The SDK's "done"
+  // callback might not be the only place physical settling matters; this checks whether
+  // text/barcode prints also need a moment before the next command, not just the feed.
   const printOneLabel = async (label: string, price: string) => {
     await GertecPrinter.printText(label, {
       fontSize: GERTEC_FONT_SIZE,
       alignment: Alignment.CENTER,
     });
+    await settle();
+
     await GertecPrinter.scrollPaper(1);
+    await settle();
 
     await GertecPrinter.printBarcode('900015950000221553595', {
       type: BarcodeType.CODE_128,
       size: BarcodeSize.FULL_PAPER,
     });
+    await settle();
+
     await GertecPrinter.scrollPaper(1);
+    await settle();
 
     await GertecPrinter.printText(price, {
       fontSize: GERTEC_FONT_SIZE,
       alignment: Alignment.CENTER,
     });
+    await settle();
 
     await GertecPrinter.scrollPaper(scrollLines);
-    
-    await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+    await settle();
   };
 
   const printSample = async () => {
