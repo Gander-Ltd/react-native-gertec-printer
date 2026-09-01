@@ -95,25 +95,20 @@ export default function App() {
       fontSize: GERTEC_FONT_SIZE,
       alignment: Alignment.CENTER,
     });
-    await sleep(textDelayMs);
 
     await GertecPrinter.scrollPaper(1);
-    await sleep(smallScrollDelayMs);
 
     await GertecPrinter.printBarcode('900015950000221553595', {
       type: BarcodeType.CODE_128,
       size: BarcodeSize.FULL_PAPER,
     });
-    await sleep(barcodeDelayMs);
 
     await GertecPrinter.scrollPaper(1);
-    await sleep(smallScrollDelayMs);
 
     await GertecPrinter.printText(price, {
       fontSize: GERTEC_FONT_SIZE,
       alignment: Alignment.CENTER,
     });
-    await sleep(textDelayMs);
 
     await GertecPrinter.scrollPaper(scrollLines);
     await sleep(bigScrollDelayMs);
@@ -193,6 +188,16 @@ export default function App() {
         disabled={isPrinting}
       />
 
+      <Button
+        title="Zero all delays"
+        onPress={() => {
+          setTextDelayMs(0);
+          setBarcodeDelayMs(0);
+          setSmallScrollDelayMs(0);
+          setBigScrollDelayMs(0);
+        }}
+        disabled={isPrinting}
+      />
       <Button title="Check printer" onPress={runCheck} disabled={isPrinting} />
       <Button title="Print 1 label" onPress={printSample} disabled={isPrinting} />
       <Button
