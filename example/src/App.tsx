@@ -25,11 +25,20 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [scrollLines, setScrollLines] = useState(20);
   const [settleDelayMs, setSettleDelayMs] = useState(700);
+  // Gertec's SDK is one stateful printer instance handling one request at a time --
+  // tapping a print button again before the previous call finishes fires a second,
+  // independent async call whose printText/printBarcode/scrollPaper requests then race
+  // the first call's, producing exactly the kind of jumbled/missing-content output this
+  // screen exists to prevent (same class of bug LabelPrinterProvider's sequential loop
+  // guards against in bruce-in-a-box). Buttons below disable themselves while true.
+  const [isPrinting, setIsPrinting] = useState(false);
 
   const append = (line: string) =>
     setLog((prev) => [...prev, `${new Date().toLocaleTimeString()}  ${line}`]);
 
   const runCheck = async () => {
+    if (isPrinting) return;
+    setIsPrinting(true);
     try {
       const present = await GertecPrinter.hasPrinter();
       append(`hasPrinter: ${present}`);
@@ -37,6 +46,8 @@ export default function App() {
       append(`status: ${status.code} ${status.message}`);
     } catch (e) {
       append(`check: error ${String(e)}`);
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -63,22 +74,29 @@ export default function App() {
     });
 
     await GertecPrinter.scrollPaper(scrollLines);
+    
     await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
   };
 
   const printSample = async () => {
+    if (isPrinting) return;
+    setIsPrinting(true);
     try {
       append(`printing 1 label (scrollPaper=${scrollLines}, delay=${settleDelayMs}ms)...`);
       await printOneLabel('PROXIMO AO VENCIMENTO', 'WAS £4.95  NOW £2.50');
       append('print: ok');
     } catch (e) {
       append(`print: error ${String(e)}`);
+    } finally {
+      setIsPrinting(false);
     }
   };
 
   // The bug this whole screen exists to chase only shows up at the BOUNDARY between
   // two copies -- a single label alone can look perfect and still overlap the next one.
   const printTwoLabels = async () => {
+    if (isPrinting) return;
+    setIsPrinting(true);
     try {
       append(`printing 2 labels back-to-back (scrollPaper=${scrollLines}, delay=${settleDelayMs}ms)...`);
       await printOneLabel('PROXIMO AO VENCIMENTO', 'WAS £4.95  NOW £2.50');
@@ -86,6 +104,8 @@ export default function App() {
       append('print: ok -- check the gap between the two labels');
     } catch (e) {
       append(`print: error ${String(e)}`);
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -107,10 +127,14 @@ export default function App() {
         <Button title="+100" onPress={() => setSettleDelayMs((n) => n + DELAY_STEP_MS)} />
       </View>
 
-      <Button title="Check printer" onPress={runCheck} />
-      <Button title="Print 1 label" onPress={printSample} />
-      <Button title="Print 2 labels (test gap)" onPress={printTwoLabels} />
-      <Button title="Clear log" onPress={() => setLog([])} />
+      <Button title="Check printer" onPress={runCheck} disabled={isPrinting} />
+      <Button title="Print 1 label" onPress={printSample} disabled={isPrinting} />
+      <Button
+        title="Print 2 labels (test gap)"
+        onPress={printTwoLabels}
+        disabled={isPrinting}
+      />
+      <Button title="Clear log" onPress={() => setLog([])} disabled={isPrinting} />
       <ScrollView style={styles.log}>
         {log.map((line, index) => (
           <Text key={index} style={styles.logLine}>
