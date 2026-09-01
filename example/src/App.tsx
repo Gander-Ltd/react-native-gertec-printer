@@ -21,10 +21,45 @@ const GERTEC_FONT_SIZE = 20;
 const SCROLL_STEP = 5;
 const DELAY_STEP_MS = 100;
 
+function NumberControl(props: {
+  label: string;
+  value: number;
+  onChange: (updater: (n: number) => number) => void;
+  step: number;
+  bigStep?: number;
+  disabled: boolean;
+}) {
+  const { label, value, onChange, step, bigStep, disabled } = props;
+  return (
+    <View style={styles.row}>
+      <Text style={styles.label}>{label}: {value}</Text>
+      {bigStep != null && (
+        <Button
+          title={`-${bigStep}`}
+          onPress={() => onChange((n) => Math.max(0, n - bigStep))}
+          disabled={disabled}
+        />
+      )}
+      <Button title={`-${step}`} onPress={() => onChange((n) => Math.max(0, n - step))} disabled={disabled} />
+      <Button title={`+${step}`} onPress={() => onChange((n) => n + step)} disabled={disabled} />
+      {bigStep != null && (
+        <Button title={`+${bigStep}`} onPress={() => onChange((n) => n + bigStep)} disabled={disabled} />
+      )}
+    </View>
+  );
+}
+
 export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [scrollLines, setScrollLines] = useState(20);
-  const [settleDelayMs, setSettleDelayMs] = useState(700);
+  // Text/barcode prints and paper feeds are physically different operations and likely
+  // need different settle times -- one shared delay forces a compromise (too long for
+  // fast ops, too short for slow ones). Independently tunable so that can be tested
+  // directly instead of guessed.
+  const [textDelayMs, setTextDelayMs] = useState(300);
+  const [barcodeDelayMs, setBarcodeDelayMs] = useState(300);
+  const [smallScrollDelayMs, setSmallScrollDelayMs] = useState(300);
+  const [bigScrollDelayMs, setBigScrollDelayMs] = useState(700);
   // Gertec's SDK is one stateful printer instance handling one request at a time --
   // tapping a print button again before the previous call finishes fires a second,
   // independent async call whose printText/printBarcode/scrollPaper requests then race
@@ -35,6 +70,8 @@ export default function App() {
 
   const append = (line: string) =>
     setLog((prev) => [...prev, `${new Date().toLocaleTimeString()}  ${line}`]);
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const runCheck = async () => {
     if (isPrinting) return;
@@ -51,46 +88,46 @@ export default function App() {
     }
   };
 
-  const settle = () => new Promise((resolve) => setTimeout(resolve, settleDelayMs));
-
-  // Mirrors PrinterService.printReducedLabelGertec, but -- as an experiment -- settles
-  // after every single SDK call, not just the final scrollPaper. The SDK's "done"
-  // callback might not be the only place physical settling matters; this checks whether
-  // text/barcode prints also need a moment before the next command, not just the feed.
+  // Mirrors PrinterService.printReducedLabelGertec, but settles after every SDK call
+  // with a delay specific to that operation's kind, not one shared value.
   const printOneLabel = async (label: string, price: string) => {
     await GertecPrinter.printText(label, {
       fontSize: GERTEC_FONT_SIZE,
       alignment: Alignment.CENTER,
     });
-    await settle();
+    await sleep(textDelayMs);
 
     await GertecPrinter.scrollPaper(1);
-    await settle();
+    await sleep(smallScrollDelayMs);
 
     await GertecPrinter.printBarcode('900015950000221553595', {
       type: BarcodeType.CODE_128,
       size: BarcodeSize.FULL_PAPER,
     });
-    await settle();
+    await sleep(barcodeDelayMs);
 
     await GertecPrinter.scrollPaper(1);
-    await settle();
+    await sleep(smallScrollDelayMs);
 
     await GertecPrinter.printText(price, {
       fontSize: GERTEC_FONT_SIZE,
       alignment: Alignment.CENTER,
     });
-    await settle();
+    await sleep(textDelayMs);
 
     await GertecPrinter.scrollPaper(scrollLines);
-    await settle();
+    await sleep(bigScrollDelayMs);
   };
+
+  const summary = () =>
+    `scrollPaper=${scrollLines} text=${textDelayMs}ms barcode=${barcodeDelayMs}ms ` +
+    `smallScroll=${smallScrollDelayMs}ms bigScroll=${bigScrollDelayMs}ms`;
 
   const printSample = async () => {
     if (isPrinting) return;
     setIsPrinting(true);
     try {
-      append(`printing 1 label (scrollPaper=${scrollLines}, delay=${settleDelayMs}ms)...`);
+      append(`printing 1 label (${summary()})...`);
       await printOneLabel('PROXIMO AO VENCIMENTO', 'WAS £4.95  NOW £2.50');
       append('print: ok');
     } catch (e) {
@@ -106,7 +143,7 @@ export default function App() {
     if (isPrinting) return;
     setIsPrinting(true);
     try {
-      append(`printing 2 labels back-to-back (scrollPaper=${scrollLines}, delay=${settleDelayMs}ms)...`);
+      append(`printing 2 labels back-to-back (${summary()})...`);
       await printOneLabel('PROXIMO AO VENCIMENTO', 'WAS £4.95  NOW £2.50');
       await printOneLabel('PROXIMO AO VENCIMENTO', 'WAS £9.00  NOW £5.00');
       append('print: ok -- check the gap between the two labels');
@@ -119,21 +156,42 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.row}>
-        <Text style={styles.label}>scrollPaper: {scrollLines}</Text>
-        <Button title="-5" onPress={() => setScrollLines((n) => Math.max(0, n - SCROLL_STEP))} />
-        <Button title="-1" onPress={() => setScrollLines((n) => Math.max(0, n - 1))} />
-        <Button title="+1" onPress={() => setScrollLines((n) => n + 1)} />
-        <Button title="+5" onPress={() => setScrollLines((n) => n + SCROLL_STEP)} />
-      </View>
-      <View style={styles.row}>
-        <Text style={styles.label}>delay: {settleDelayMs}ms</Text>
-        <Button
-          title="-100"
-          onPress={() => setSettleDelayMs((n) => Math.max(0, n - DELAY_STEP_MS))}
-        />
-        <Button title="+100" onPress={() => setSettleDelayMs((n) => n + DELAY_STEP_MS)} />
-      </View>
+      <NumberControl
+        label="scrollPaper"
+        value={scrollLines}
+        onChange={setScrollLines}
+        step={1}
+        bigStep={SCROLL_STEP}
+        disabled={isPrinting}
+      />
+      <NumberControl
+        label="text delay"
+        value={textDelayMs}
+        onChange={setTextDelayMs}
+        step={DELAY_STEP_MS}
+        disabled={isPrinting}
+      />
+      <NumberControl
+        label="barcode delay"
+        value={barcodeDelayMs}
+        onChange={setBarcodeDelayMs}
+        step={DELAY_STEP_MS}
+        disabled={isPrinting}
+      />
+      <NumberControl
+        label="small scroll delay"
+        value={smallScrollDelayMs}
+        onChange={setSmallScrollDelayMs}
+        step={DELAY_STEP_MS}
+        disabled={isPrinting}
+      />
+      <NumberControl
+        label="big scroll delay"
+        value={bigScrollDelayMs}
+        onChange={setBigScrollDelayMs}
+        step={DELAY_STEP_MS}
+        disabled={isPrinting}
+      />
 
       <Button title="Check printer" onPress={runCheck} disabled={isPrinting} />
       <Button title="Print 1 label" onPress={printSample} disabled={isPrinting} />
@@ -157,22 +215,22 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: 60,
+    paddingTop: 40,
     paddingHorizontal: 16,
-    gap: 12,
+    gap: 8,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
   },
   label: {
     fontFamily: 'monospace',
-    fontSize: 14,
+    fontSize: 13,
     minWidth: 140,
   },
   log: {
-    marginTop: 12,
+    marginTop: 8,
   },
   logLine: {
     fontFamily: 'monospace',
